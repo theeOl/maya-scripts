@@ -1,0 +1,69 @@
+
+#######################
+#WORKING FINAL PUBLISH#
+#######################
+
+#created by shankar doran
+# contact #
+'''
+https://www.linkedin.com/in/shankar-doran-186415275/
+'''
+
+#python code for maya 2020
+#runs through each object in the scene.
+#reassigns the shader to those with only one shader. 
+#skipps those with more than one. 
+#after execution it reports which object were reassigned and which were skipped. 
+#useful for corrupt shader object data. 
+
+import maya.cmds as mc
+
+def assign_single_shader_to_objects():
+    fixed_objects = []
+    skipped_objects = []
+
+    # Get a list of all objects in the scene
+    all_objects = mc.ls(dag=True, long=True)
+
+    for obj in all_objects:
+        # Check if the object is a mesh
+        if mc.objectType(obj) == 'mesh':
+            # Get the shading groups connected to the object
+            shading_groups = mc.listConnections(obj, type="shadingEngine")
+            
+            # If there is exactly one shading group, assign its shader to the object
+            if shading_groups and len(shading_groups) <= 2:
+                shader = mc.listConnections(shading_groups[0] + ".surfaceShader")
+                if shader:
+                    mc.sets(obj, edit=True, forceElement=shading_groups[0])
+                    fixed_objects.append(obj)
+            else:
+                skipped_objects.append(obj)
+
+    # Create a pop-up window to display the results
+    result_window = mc.window(title="Shader Assignment Results", widthHeight=(300, 200))
+    mc.columnLayout(adjustableColumn=True)
+    
+    mc.text(label="Fixed Object Names:")
+    mc.textScrollList(numberOfRows=10, append=fixed_objects)
+    
+    mc.text(label="Skipped Object Names:")
+    mc.textScrollList(numberOfRows=10, append=skipped_objects)
+    
+    mc.showWindow(result_window)
+
+# Call the function to assign shaders and display the results
+assign_single_shader_to_objects()
+
+
+
+
+
+
+
+
+
+
+
+
+
