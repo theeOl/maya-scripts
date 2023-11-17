@@ -1,0 +1,399 @@
+
+#######################
+#FINAL WORKING PUBLISH#
+#######################
+
+#created by shankar doran
+# contact #
+'''
+https://www.linkedin.com/in/shankar-doran-186415275/
+'''
+
+#python code for maya 2020
+#In the "Keyword" field, input a keyword to filter texture files by name.
+#Specify the suffixes for the Color, Metallness, and Roughness textures in the respective fields.
+#(e.g., if your color texture is named 'wood_color.tga', the suffix is '_color')
+#click create. 
+
+import maya.cmds as cmds
+import os
+
+def filter_textures_by_keyword(directory, keyword):
+    """Return a list of texture files filtered by the keyword."""
+    if not directory or not os.path.exists(directory):
+        return []
+
+    all_files = [f for f in os.listdir(directory) if os.path.isfile(os.path.join(directory, f))]
+    textures = [f for f in all_files if f.endswith(('.tga', '.png', '.tiff', '.exr', '.jpg'))]
+
+    return [tex for tex in textures if keyword in tex] if keyword else textures
+
+def update_texture_list(*args):
+    """Update the main texture list with files from the directory."""
+    path = cmds.textField(filepath_tf, q=True, text=True)
+    textures = filter_textures_by_keyword(path, None)
+    cmds.textScrollList(texture_list, e=True, removeAll=True, append=textures)
+
+def update_filtered_list(*args):
+    """Update the filtered texture list based on the keyword."""
+    path = cmds.textField(filepath_tf, q=True, text=True)
+    keyword = cmds.textField(keyword_tf, q=True, text=True)
+    filtered_textures = filter_textures_by_keyword(path, keyword)
+    cmds.textScrollList(filtered_list, e=True, removeAll=True, append=filtered_textures)
+
+
+def create_arnold_shader(keyword, texture_nodes):
+    """Creates an Arnold aiStandardSurface shader."""
+    # Create an aiStandardSurface shader with the given keyword as its name
+    shader_name = "{}_ai".format(keyword)
+    shader_node = cmds.shadingNode('aiStandardSurface', asShader=True, name=shader_name)
+    shading_group = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name=shader_name + "SG")
+    cmds.connectAttr(shader_node + '.outColor', shading_group + '.surfaceShader', force=True)
+    print('Arnold Shader ' + shader_name + " created.")
+    
+    if cmds.checkBox(prxy_checkbox, q=True, value=True):
+        # Create a lambert shader
+        lambert_shader = cmds.shadingNode('lambert', asShader=True, name=keyword + "_prxy")
+        cmds.connectAttr(lambert_shader + '.outColor', shading_group + '.surfaceShader', force=True)
+
+        # If a color texture is present, connect it to the Lambert shader
+        if "color" in texture_nodes:
+            cmds.connectAttr(texture_nodes["color"] + ".outColor", lambert_shader + ".color", force=True)
+        
+        # Connect Lambert shader outColor to Arnold shader's Shading Group's surfaceShader
+        cmds.connectAttr(shader_node + '.outColor', shading_group + '.aiSurfaceShader', force=True)
+        print("prxy added.")
+        
+        
+        
+    # Connect the file nodes to the shader with or without remap nodes
+    if "color" in texture_nodes:
+        if cmds.checkBox(color_remap_cb, q=True, value=True):
+            remap_node = cmds.shadingNode('remapHsv', asUtility=True)
+            cmds.connectAttr(texture_nodes["color"] + ".outColor", remap_node + ".color", force=True)
+            cmds.connectAttr(remap_node + ".outColor", shader_node + ".baseColor", force=True)
+        else:
+            cmds.connectAttr(texture_nodes["color"] + ".outColor", shader_node + ".baseColor", force=True)
+    # Emission handling
+    if "emission" in texture_nodes:
+        if cmds.checkBox(emission_remap_cb, q=True, value=True):  # Assuming you have defined emission_remap_cb
+            remap_node = cmds.shadingNode('remapHsv', asUtility=True)
+            cmds.connectAttr(texture_nodes["emission"] + ".outColor", remap_node + ".color", force=True)
+            cmds.connectAttr(remap_node + ".outColor", shader_node + ".emissionColor", force=True)
+        else:
+            cmds.connectAttr(texture_nodes["emission"] + ".outColor", shader_node + ".emissionColor", force=True)
+
+    for attr_name, shader_attr, remap_cb in [("metalness", "metalness", metal_remap_cb), 
+                                             ("roughness", "specularRoughness", roughness_remap_cb)]:
+        if attr_name in texture_nodes:
+            if cmds.checkBox(remap_cb, q=True, value=True):
+                remap_node = cmds.shadingNode('remapValue', asUtility=True)
+                cmds.connectAttr(texture_nodes[attr_name] + ".outAlpha", remap_node + ".inputValue", force=True)
+                cmds.connectAttr(remap_node + ".outValue", shader_node + "." + shader_attr, force=True)
+            else:
+                cmds.connectAttr(texture_nodes[attr_name] + ".outAlpha", shader_node + "." + shader_attr, force=True)
+
+    if "normal" in texture_nodes:
+        bump2d_node = cmds.shadingNode('bump2d', asUtility=True)
+        if cmds.checkBox(normal_cb, q=True, value=True):
+            cmds.setAttr(bump2d_node + ".bumpInterp", 1)
+        cmds.connectAttr(texture_nodes["normal"] + ".outAlpha", bump2d_node + ".bumpValue", force=True)
+        cmds.connectAttr(bump2d_node + ".outNormal", shader_node + ".normalCamera", force=True)
+
+    return shader_node
+
+def create_redshift_shader(keyword, texture_nodes):
+    """Creates a Redshift shader."""
+    
+    # Create a Redshift shader with the given keyword as its name
+    shader_name = "{}_rs".format(keyword)
+    shader_node = cmds.shadingNode('RedshiftMaterial', asShader=True, name=shader_name)
+    shading_group = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name=shader_name + "SG")
+    cmds.connectAttr(shader_node + '.outColor', shading_group + '.surfaceShader', force=True)
+    
+    # Adjust Redshift specific properties
+    cmds.setAttr(shader_node + ".refl_brdf", 1)  # Set BRDF to GGX
+    cmds.setAttr(shader_node + ".refl_fresnel_mode", 2)  # Set Fresnel Type to IOR to metallic
+    
+    if cmds.checkBox(prxy_checkbox, q=True, value=True):
+        # Create a lambert shader
+        lambert_shader = cmds.shadingNode('lambert', asShader=True, name=keyword + "_prxy")
+        cmds.connectAttr(lambert_shader + '.outColor', shading_group + '.surfaceShader', force=True)
+
+        # If a color texture is present, connect it to the Lambert shader
+        if "color" in texture_nodes:
+            cmds.connectAttr(texture_nodes["color"] + ".outColor", lambert_shader + ".color", force=True)
+        
+        # Connect Lambert shader outColor to Arnold shader's Shading Group's surfaceShader
+        cmds.connectAttr(shader_node + '.outColor', shading_group + '.rsSurfaceShader', force=True)
+        print("prxy added.")
+        
+    # Connect the file nodes to the Redshift shader
+    if "color" in texture_nodes:
+        if cmds.checkBox(color_remap_cb, q=True, value=True):
+            remap_node = cmds.shadingNode('remapHsv', asUtility=True)
+            cmds.connectAttr(texture_nodes["color"] + ".outColor", remap_node + ".color", force=True)
+            cmds.connectAttr(remap_node + ".outColor", shader_node + ".diffuse_color", force=True)
+        else:
+            cmds.connectAttr(texture_nodes["color"] + ".outColor", shader_node + ".diffuse_color", force=True)
+    # Emission handling
+    if "emission" in texture_nodes:
+        if cmds.checkBox(emission_remap_cb, q=True, value=True):  # Assuming you have defined emission_remap_cb
+            remap_node = cmds.shadingNode('remapHsv', asUtility=True)
+            cmds.connectAttr(texture_nodes["emission"] + ".outColor", remap_node + ".color", force=True)
+            cmds.connectAttr(remap_node + ".outColor", shader_node + ".emission_color", force=True)
+        else:
+            cmds.connectAttr(texture_nodes["emission"] + ".outColor", shader_node + ".emission_color", force=True)
+
+    if "metalness" in texture_nodes:
+        if cmds.checkBox(metal_remap_cb, q=True, value=True):
+            remap_node = cmds.shadingNode('remapValue', asUtility=True)
+            cmds.connectAttr(texture_nodes["metalness"] + ".outAlpha", remap_node + ".inputValue", force=True)
+            cmds.connectAttr(remap_node + ".outValue", shader_node + ".refl_metalness", force=True)
+        else:
+            cmds.connectAttr(texture_nodes["metalness"] + ".outAlpha", shader_node + ".refl_metalness", force=True)
+
+    if "roughness" in texture_nodes:
+        if cmds.checkBox(roughness_remap_cb, q=True, value=True):
+            remap_node = cmds.shadingNode('remapValue', asUtility=True)
+            cmds.connectAttr(texture_nodes["roughness"] + ".outAlpha", remap_node + ".inputValue", force=True)
+            cmds.connectAttr(remap_node + ".outValue", shader_node + ".refl_roughness", force=True)
+        else:
+            cmds.connectAttr(texture_nodes["roughness"] + ".outAlpha", shader_node + ".refl_roughness", force=True)
+
+    if "normal" in texture_nodes:
+        rs_bump_map_node = cmds.shadingNode('RedshiftBumpMap', asUtility=True)
+        if cmds.checkBox(normal_cb, q=True, value=True):
+            cmds.setAttr(rs_bump_map_node + ".inputType", 1)
+            cmds.setAttr(rs_bump_map_node + ".scale", 1)
+        cmds.connectAttr(texture_nodes["normal"] + ".outColor", rs_bump_map_node + ".input", force=True)
+        cmds.connectAttr(rs_bump_map_node + ".out", shader_node + ".bump_input", force=True)
+
+    print('Redshift Shader ' + shader_name + " created.")
+    return shader_node
+    
+def create_redshiftstandard_shader(keyword, texture_nodes):
+    """Creates a Redshift shader."""
+    
+    # Create a Redshift shader with the given keyword as its name
+    shader_name = "{}_rs".format(keyword)
+    shader_node = cmds.shadingNode('RedshiftStandardMaterial', asShader=True, name=shader_name)
+    shading_group = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name=shader_name + "SG")
+    cmds.connectAttr(shader_node + '.outColor', shading_group + '.surfaceShader', force=True)
+    
+    if cmds.checkBox(prxy_checkbox, q=True, value=True):
+        # Create a lambert shader
+        lambert_shader = cmds.shadingNode('lambert', asShader=True, name=keyword + "_prxy")
+        cmds.connectAttr(lambert_shader + '.outColor', shading_group + '.surfaceShader', force=True)
+
+        # If a color texture is present, connect it to the Lambert shader
+        if "color" in texture_nodes:
+            cmds.connectAttr(texture_nodes["color"] + ".outColor", lambert_shader + ".color", force=True)
+        
+        # Connect Lambert shader outColor to Arnold shader's Shading Group's surfaceShader
+        cmds.connectAttr(shader_node + '.outColor', shading_group + '.rsSurfaceShader', force=True)
+        print("prxy added.")
+    
+   
+    # Connect the file nodes to the Redshift shader
+    if "color" in texture_nodes:
+        if cmds.checkBox(color_remap_cb, q=True, value=True):
+            remap_node = cmds.shadingNode('remapHsv', asUtility=True)
+            cmds.connectAttr(texture_nodes["color"] + ".outColor", remap_node + ".color", force=True)
+            cmds.connectAttr(remap_node + ".outColor", shader_node + ".base_color", force=True)
+        else:
+            cmds.connectAttr(texture_nodes["color"] + ".outColor", shader_node + ".base_color", force=True)
+    # Emission handling
+    if "emission" in texture_nodes:
+        if cmds.checkBox(emission_remap_cb, q=True, value=True):  # Assuming you have defined emission_remap_cb
+            remap_node = cmds.shadingNode('remapHsv', asUtility=True)
+            cmds.connectAttr(texture_nodes["emission"] + ".outColor", remap_node + ".color", force=True)
+            cmds.connectAttr(remap_node + ".outColor", shader_node + ".emission_color", force=True)
+        else:
+            cmds.connectAttr(texture_nodes["emission"] + ".outColor", shader_node + ".emission_color", force=True)
+
+    if "metalness" in texture_nodes:
+        if cmds.checkBox(metal_remap_cb, q=True, value=True):
+            remap_node = cmds.shadingNode('remapValue', asUtility=True)
+            cmds.connectAttr(texture_nodes["metalness"] + ".outAlpha", remap_node + ".inputValue", force=True)
+            cmds.connectAttr(remap_node + ".outValue", shader_node + ".metalness", force=True)
+        else:
+            cmds.connectAttr(texture_nodes["metalness"] + ".outAlpha", shader_node + ".metalness", force=True)
+
+    if "roughness" in texture_nodes:
+        if cmds.checkBox(roughness_remap_cb, q=True, value=True):
+            remap_node = cmds.shadingNode('remapValue', asUtility=True)
+            cmds.connectAttr(texture_nodes["roughness"] + ".outAlpha", remap_node + ".inputValue", force=True)
+            cmds.connectAttr(remap_node + ".outValue", shader_node + ".refl_roughness", force=True)
+        else:
+            cmds.connectAttr(texture_nodes["roughness"] + ".outAlpha", shader_node + ".refl_roughness", force=True)
+
+    if "normal" in texture_nodes:
+        rs_bump_map_node = cmds.shadingNode('RedshiftBumpMap', asUtility=True)
+        if cmds.checkBox(normal_cb, q=True, value=True):
+            cmds.setAttr(rs_bump_map_node + ".inputType", 1)
+            cmds.setAttr(rs_bump_map_node + ".scale", 1)
+        cmds.connectAttr(texture_nodes["normal"] + ".outColor", rs_bump_map_node + ".input", force=True)
+        cmds.connectAttr(rs_bump_map_node + ".out", shader_node + ".bump_input", force=True)
+
+    print('Redshift Standard Shader ' + shader_name + " created.")
+    return shader_node
+
+
+def create_shader(*args):
+    """Find textures based on suffixes, print them, and create an aiStandardSurface shader with them."""
+    suffixes = {
+        "color": cmds.textField(color_tf, q=True, text=True),
+        "roughness": cmds.textField(roughness_tf, q=True, text=True),
+        "metalness": cmds.textField(metal_tf, q=True, text=True),
+        "emission": cmds.textField(emission_tf, q=True, text=True),
+        "normal": cmds.textField(normal_tf, q=True, text=True)  
+    }
+
+    filtered_textures = cmds.textScrollList(filtered_list, q=True, allItems=True) or []
+    keyword = cmds.textField(keyword_tf, q=True, text=True)
+    texture_nodes = {}
+    
+    # Create a place2dTexture node
+    place2d_node = cmds.shadingNode('place2dTexture', asUtility=True)
+              
+    # Find the textures based on the given suffixes
+    for attr, suffix in suffixes.items():
+        if not suffix:  # Skip if the suffix is empty
+            continue
+        
+        for texture in filtered_textures:
+            if os.path.splitext(texture)[0].endswith(suffix):
+                print("{}: \"{}\"".format(attr, texture))
+                # Create a file node for the texture with a name based on the actual texture
+                file_node_base_name = os.path.splitext(texture)[0] + "_file"
+                file_node = cmds.shadingNode('file', asTexture=True, name=file_node_base_name)
+
+                full_path = os.path.join(cmds.textField(filepath_tf, q=True, text=True), texture)
+                cmds.setAttr(file_node + ".fileTextureName", full_path, type="string")
+                
+                # Connect its outUV to the file node's uvCoord
+                cmds.connectAttr(place2d_node + ".outUV", file_node + ".uvCoord", force=True)
+          
+                # Set alphaIsLuminance for metallness and roughness
+                if attr in ["metalness", "roughness"]:
+                    cmds.setAttr(file_node + ".alphaIsLuminance", 1)  # Turning on the attribute
+                if attr == "roughness" and cmds.checkBox(isGlossiness_cb, q=True, value=True):
+                     cmds.setAttr(file_node + ".invert", 1)
+                        
+                # Set the colorSpace for metallness, roughness, and normal to raw
+                if attr in ["metalness", "roughness", "normal"]:
+                    cmds.setAttr(file_node + ".colorSpace", "Raw", type="string")
+                
+                texture_nodes[attr] = file_node
+                break
+
+    # Check which renderer is selected and create a shader accordingly
+    if cmds.checkBox(arnold_checkbox, q=True, value=True):
+        create_arnold_shader(keyword, texture_nodes)
+    elif cmds.checkBox(redshift_checkbox, q=True, value=True):
+        create_redshift_shader(keyword, texture_nodes)
+    elif cmds.checkBox(redshiftstandard_checkbox, q=True, value=True):
+        create_redshiftstandard_shader(keyword, texture_nodes)
+        
+#if cmds.checkBox(normal_cb, q=True, value=True):
+
+def create_ui():
+    """Create the main UI window."""
+    global filepath_tf, keyword_tf, color_tf, roughness_tf, metal_tf, emission_tf, normal_tf
+    global color_remap_cb, roughness_remap_cb, metal_remap_cb, emission_remap_cb  # Adding the remap checkboxes as globals
+    global normal_cb
+    global isGlossiness_cb
+    global arnold_checkbox, redshift_checkbox, redshiftstandard_checkbox, prxy_checkbox   # Declare these as global variables
+    
+    if cmds.window("ShaderCreator", exists=True):
+        cmds.deleteUI("ShaderCreator")
+
+    cmds.window("ShaderCreator", title="ShaderCreator", widthHeight=(400, 400))
+    cmds.columnLayout(adjustableColumn=True)
+
+    # Checkboxes for Arnold and Redshift and RedshiftStandard
+    cmds.rowLayout(numberOfColumns=9)
+    cmds.text(label='Arnold')#aiStandardSurface
+    arnold_checkbox = cmds.checkBox(label='', value=False)
+    cmds.text(label='RedshiftMaterial')#RedshiftMaterial
+    redshift_checkbox = cmds.checkBox(label='', value=False)
+    cmds.text(label='RedshiftStandard')#RedshiftStandardMaterial
+    redshiftstandard_checkbox = cmds.checkBox(label='', value=True)
+    cmds.separator(width=70, style='none')  # Adding a separator for spacing, if needed
+    prxy_checkbox = cmds.checkBox(label='', value=False)  # Create the 'prxy' checkbox
+    cmds.text(label='prxy')  # New Checkbox for 'prxy'
+    cmds.setParent('..')
+    
+    # Texture Filepath UI
+    cmds.text(label='Texture Filepath')
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, 'both', 10), (2, 'right', 5)])
+    filepath_tf = cmds.textField(width=300)
+    cmds.button(label='Enter', command=update_texture_list)
+    cmds.setParent('..')
+
+    # Keyword UI
+    cmds.text(label='Keyword')
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, 'both', 10), (2, 'right', 5)])
+    keyword_tf = cmds.textField(width=300)
+    cmds.button(label='Enter', command=update_filtered_list)
+    cmds.setParent('..')
+    
+    
+    # Color, Metallness, Roughness and Normal UI
+    attributes = ['Color', 'Roughness', 'Metalness', 'Emission', 'Bump']
+    text_fields = []
+    remap_checkboxes = []
+    
+    default_suffixes = {
+    'Color': '_c',
+    'Roughness': '_r',
+    'Metalness': '_m',
+    'Emission': '_e',
+    'Bump': '_n'
+    }
+
+    for label in attributes:
+        if label != 'Bump': 
+            if label != 'Roughness': 
+                cmds.rowLayout(numberOfColumns=5, columnWidth5=(85, 100, 10, 25, 70))
+                cmds.text(label=label)
+                text_fields.append(cmds.textField(width=80, text=default_suffixes[label]))
+                cmds.separator(width=10, style='none')  # This is a blank space separator
+                remap_checkboxes.append(cmds.checkBox(label='', width=25))
+                cmds.text(label="Remap")
+            else:
+                cmds.rowLayout(numberOfColumns=8, columnWidth=[(1, 85), (2, 100), (3, 10), (4, 25), (5, 70), (6, 10), (7, 25), (8, 80)])
+                cmds.text(label=label)
+                text_fields.append(cmds.textField(width=80, text=default_suffixes[label]))
+                cmds.separator(width=10, style='none')  # This is a blank space separator
+                remap_checkboxes.append(cmds.checkBox(label='', width=25))
+                cmds.text(label="Remap")
+                cmds.separator(width=10, style='none')  # Another blank space separator before the new checkbox
+                isGlossiness_cb = cmds.checkBox(label='', width=25)
+                cmds.text(label="isGlossiness")
+        else:
+            cmds.rowLayout(numberOfColumns=5, columnWidth5=(85, 100, 10, 25, 70))
+            cmds.text(label=label)
+            text_fields.append(cmds.textField(width=80, text=default_suffixes[label]))
+            cmds.separator(width=10, style='none')  # This is a blank space separator
+            normal_cb=cmds.checkBox(label='', value=True, width=25)
+            cmds.text(label="Normal")
+        cmds.setParent('..')
+
+    color_tf, roughness_tf, metal_tf, emission_tf, normal_tf = text_fields  
+    color_remap_cb, roughness_remap_cb, metal_remap_cb, emission_remap_cb = remap_checkboxes
+    # Create button
+    cmds.button(label='CREATE', height=40, command=create_shader)
+
+    # Texture Lists
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnWidth2=(200, 200))
+    global texture_list, filtered_list
+    texture_list = cmds.textScrollList(allowMultiSelection=False)
+    filtered_list = cmds.textScrollList(allowMultiSelection=False)
+
+    cmds.showWindow("ShaderCreator")
+
+# Start the UI
+create_ui()
+
