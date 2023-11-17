@@ -1,0 +1,144 @@
+
+#########################
+#FINAL PUBLISH FINISHED #
+#########################
+
+#created by shankar doran
+# contact #
+'''
+https://www.linkedin.com/in/shankar-doran-186415275/
+'''
+
+#python code for maya 2020
+#set the colorgain of the connected texture to the color input of the shaders 
+#with the input keyword included in their name. if no texturefile exists 
+#color value of shader is changed instead. 
+
+# for individual use #
+#pick hsv color, input keyword that is in the name of the shader/s
+#execute. 
+# for batch use #
+#link filepath to .txt document. inside the .txt document the first line
+#is skipped. 
+# txt file template #
+'''
+##presets use   (word),(rgb values)##
+red, 1.0 0.0 0.0
+green, 0.0 1.0 0.0
+blue, 0.0 0.0 1.0
+'''
+
+import maya.cmds as cmds
+import os
+
+# Convert HSV to RGB
+def hsv_to_rgb(h, s, v):
+    i = int(h * 6.0)
+    f = (h * 6.0) - i
+    p, q, t = v * (1.0 - s), v * (1.0 - f * s), v * (1.0 - (1.0 - f) * s)
+    if i % 6 == 0:
+        r, g, b = v, t, p
+    elif i % 6 == 1:
+        r, g, b = q, v, p
+    elif i % 6 == 2:
+        r, g, b = p, v, t
+    elif i % 6 == 3:
+        r, g, b = p, q, v
+    elif i % 6 == 4:
+        r, g, b = t, p, v
+    else:
+        r, g, b = v, p, q
+    return r, g, b
+
+
+# Set the color attribute
+def set_color(material_name, plug, color_value):
+    texture_nodes = cmds.listConnections("{}.{}".format(material_name, plug))
+    target_attr = "{}.colorGain".format(texture_nodes[0]) if texture_nodes else "{}.{}".format(material_name, plug)
+    cmds.setAttr(target_attr, *color_value, type="double3")
+
+# Find materials and change their color
+def change_materials_color(word, new_color, plug='color'):
+    word = word.lower()
+    materials = cmds.ls(materials=True)
+    for material in materials:
+        if word in material.lower():
+            set_color(material, plug, new_color)
+
+# Process the text file for batch changes
+def process_text_file(file_path):
+    with open(file_path, 'r') as file:
+        next(file)  # Skip the header
+        for line in file:
+            name, color_values = line.strip().split(',')
+            change_materials_color(name, [float(x) for x in color_values.split()])
+
+# UI callback functions
+def update_color(hue, sat, val):
+    rgb = hsv_to_rgb(hue, sat, val)
+    cmds.colorSliderGrp("colorDisplay", edit=True, rgbValue=rgb)
+
+def execute_change():
+    word = cmds.textField("text_field", query=True, text=True)
+    h, s, v = [cmds.floatSliderGrp(slider, query=True, value=True) for slider in ["hueSlider", "satSlider", "valSlider"]]
+    change_materials_color(word, hsv_to_rgb(h, s, v))
+    
+
+def execute_batch():
+    file_path = cmds.textField("filePathTextField", query=True, text=True)
+    if os.path.isfile(file_path):
+        process_text_file(file_path)
+    else:
+        cmds.confirmDialog(title="File Not Found", message="The specified file does not exist.", button=["OK"])
+# Update the color display
+def update_color_display(hue, sat, val):
+    rgb = hsv_to_rgb(hue, sat, val)
+    cmds.canvas("colorDisplay", edit=True, rgbValue=rgb)
+    
+# Build UI
+def build_ui():
+    if cmds.window("changeMaterialColorHSVWindow", exists=True):
+        cmds.deleteUI("changeMaterialColorHSVWindow")
+
+    cmds.window("changeMaterialColorHSVWindow", title="MultipleShaderColorSetter", width=300)
+    cmds.columnLayout(adjustableColumn=True)
+    cmds.text(label="Pick a Color with HSV Sliders:")
+    for slider, label in zip(["hueSlider", "satSlider", "valSlider"], ["Hue", "Sat", "Val"]):
+        # Reduce the first column width to move sliders to the left
+        cmds.floatSliderGrp(slider, label=label, field=True, minValue=0.0, maxValue=1.0, value=1.0, columnWidth=[(1, 30), (2, 50)], step=0.01,
+                            dragCommand=lambda x, slider=slider: update_color_display(*[cmds.floatSliderGrp(slider, query=True, value=True) for slider in ["hueSlider", "satSlider", "valSlider"]]))
+
+    # Create a canvas to show the color
+    cmds.canvas("colorDisplay", width=50, height=50, rgbValue=(1, 1, 1))
+
+    cmds.separator(h=10)  # Just to add a little space
+
+    # Keyword label aligned to the left
+    cmds.text(label="Keyword:", align='left')
+    
+    # Change Material Color Row
+    cmds.rowLayout(numberOfColumns=3, columnAlign=(1, 'right'), columnAttach=[(1, 'both', 0), (2, 'both', 5), (3, 'both', 0)], adjustableColumn=1)
+    cmds.textField("text_field")
+    cmds.button(label="Change Material Color", command=lambda x: execute_change(), width=150)
+    cmds.setParent('..')  # Go up one level in the layout hierarchy
+
+    cmds.separator()
+
+    # Filepath label aligned to the left
+    cmds.text(label="Filepath:", align='left')
+
+    # Run Batch Process Row
+    cmds.rowLayout(numberOfColumns=3, columnAlign=(1, 'right'), columnAttach=[(1, 'both', 0), (2, 'both', 5), (3, 'both', 0)], adjustableColumn=1)
+    cmds.textField("filePathTextField")
+    cmds.button(label="Run Batch Process", command=lambda x: execute_batch(), width=150)
+    cmds.setParent('..')  # Go up one level in the layout hierarchy
+
+    cmds.showWindow("changeMaterialColorHSVWindow")
+
+build_ui()
+
+
+
+
+
+
