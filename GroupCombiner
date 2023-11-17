@@ -1,0 +1,79 @@
+
+############################################################
+#UPDATED PUBLISH WORKING SKIPPS SINGLE GROUPS AND CONTINUES#
+############################################################
+
+#created by shankar doran
+# contact #
+'''
+https://www.linkedin.com/in/shankar-doran-186415275/
+'''
+
+#python code for maya 2020
+#combines the insides of selected groups. 
+#skipps groups with only one object and reports them. 
+#used to clean up scene. 
+
+import maya.cmds as cmds
+
+def combine_objects_in_group(group_name):
+    # Check if the group exists
+    if not cmds.objExists(group_name):
+        cmds.warning("Group '{}' does not exist.".format(group_name))
+        return
+
+    # Get the children of the group
+    group_children = cmds.listRelatives(group_name, children=True, fullPath=True) or []
+
+    # Skip groups with only one child
+    if len(group_children) <= 1:
+        cmds.warning("Skipping group '{}' as it has only one child.".format(group_name))
+        return
+
+    # Extract the name of the group
+    combined_name = cmds.ls(group_name, shortNames=True)[0]
+
+    # Get the full path of the group
+    full_path = cmds.ls(group_name, long=True)[0]
+
+    # Split the full path into components
+    components = full_path.split('|')
+
+    # Extract the last component as the base name
+    base_name = components[-1] + "_geo"
+
+    # Create a duplicate of the objects inside the group while preserving shaders
+    duplicate_objects = []
+    for child in group_children:
+        duplicate_child = cmds.duplicate(child, rr=True)[0]
+        duplicate_objects.append(duplicate_child)
+
+    # Combine the duplicate objects with construction history on
+    combined_mesh = cmds.polyUnite(duplicate_objects, name=base_name, mergeUVSets=True, centerPivot=True, ch=True)[0]
+
+    # Reparent the combined mesh to the original group
+    cmds.parent(combined_mesh, group_name)
+
+    # Delete the original objects in the group
+    for child in group_children:
+        if cmds.objExists(child):
+            cmds.delete(child)
+
+    # Delete the construction history of the group
+    cmds.delete(group_name, constructionHistory=True)
+
+    print("Combined objects in '{}' into '{}' while preserving shaders and deleted history.".format(group_name, combined_mesh))
+
+# Get the selected objects
+selected_objects = cmds.ls(selection=True, long=True)
+
+if not selected_objects:
+    cmds.warning("Please select the group(s) you want to combine.")
+else:
+    for selected_object in selected_objects:
+        # Check if the selected object is a group
+        if cmds.objectType(selected_object) == 'transform':
+            combine_objects_in_group(selected_object)
+        else:
+            cmds.warning("Selected object '{}' is not a group.".format(selected_object))
+
