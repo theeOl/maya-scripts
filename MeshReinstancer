@@ -1,0 +1,487 @@
+
+########################
+#FINAL WORKING PUBLISH #
+########################
+
+#created by shankar doran
+# contact #
+'''
+https://www.linkedin.com/in/shankar-doran-186415275/
+'''
+
+#python code for maya 2020
+#rotate translate scale an instance of source to target mesh object. 
+
+# F O R # U S E #
+# first select source object then target object/s then run script.
+# if more than one target instance group will be created. 
+
+from maya import cmds
+import math
+import time
+
+############# R O T A T E ############### ---->>>>>
+
+
+
+def calculate_normalized_normal(vertex1, vertex2, vertex3):
+    # Calculate two vectors on the triangle's plane
+    edge1 = [vertex2[i] - vertex1[i] for i in range(3)]
+    edge2 = [vertex3[i] - vertex1[i] for i in range(3)]
+
+    # Calculate the cross product of the two vectors to find the normal vector
+    normal_vector = [
+        edge1[1] * edge2[2] - edge1[2] * edge2[1],
+        edge1[2] * edge2[0] - edge1[0] * edge2[2],
+        edge1[0] * edge2[1] - edge1[1] * edge2[0]
+    ]
+
+    # Normalize the normal vector
+    normal_vector_length = sum(x ** 2 for x in normal_vector) ** 0.5
+    if normal_vector_length != 0:
+        normalized_normal = [x / normal_vector_length for x in normal_vector]
+    else:
+        normalized_normal = [0.0, 0.0, 0.0]
+
+    return normalized_normal
+    
+def dot_product(v1, v2):
+    return sum(x*y for x, y in zip(v1, v2))
+
+def cross_product(v1, v2):
+    return (
+        v1[1]*v2[2] - v1[2]*v2[1],
+        v1[2]*v2[0] - v1[0]*v2[2],
+        v1[0]*v2[1] - v1[1]*v2[0]
+    )
+
+def normalize(v):
+    magnitude = math.sqrt(dot_product(v, v))
+    if magnitude < 1e-10:
+        return (0.0, 0.0, 0.0)
+    return tuple(x/magnitude for x in v)
+
+def matrix_multiply(A, B):
+    result = []
+    for i in range(3):
+        row = []
+        for j in range(3):
+            value = sum(A[i][k] * B[k][j] for k in range(3))
+            row.append(value)
+        result.append(tuple(row))
+    return tuple(result)
+
+def rotation_matrix_to_euler_angles(R):
+    sy = math.sqrt(R[0][0] **2 +  R[1][0] **2)
+    singular = sy < 1e-6
+
+    if not singular:
+        x = math.atan2(R[2][1], R[2][2])
+        y = math.atan2(-R[2][0], sy)
+        z = math.atan2(R[1][0], R[0][0])
+    else:
+        x = math.atan2(-R[1][2], R[1][1])
+        y = math.atan2(-R[2][0], sy)
+        z = 0
+
+    return math.degrees(x), math.degrees(y), math.degrees(z)
+
+def calculate_rotation_matrix(A, B):
+    A = normalize(A)
+    B = normalize(B)
+    
+    C = cross_product(A, B)
+    D = dot_product(A, B)
+    
+    S = (
+        (0, -C[2], C[1]),
+        (C[2], 0, -C[0]),
+        (-C[1], C[0], 0)
+    )
+    
+    I = (
+        (1, 0, 0),
+        (0, 1, 0),
+        (0, 0, 1)
+    )
+    
+    R = [
+    tuple(x+y for x, y in zip(I_row, S_row)) for I_row, S_row in zip(I, S)
+    ]
+    S2 = matrix_multiply(S, S)
+    R = [
+    tuple(x+y/(1.0+D) for x, y in zip(R_row, S2_row)) for R_row, S2_row in zip(R, S2)
+    ]
+    
+    return R
+    
+
+def vector_from_vertex1_to_vertex2(vertex1, vertex2):
+    return tuple(v2 - v1 for v1, v2 in zip(vertex1, vertex2))
+
+def align_source_with_target(source_mesh, target_mesh):
+    source_vertex_positions = get_vertex_coordinates(source_mesh)
+    target_vertex_positions = get_vertex_coordinates(target_mesh)
+
+    # Calculate normals
+    source_normal = calculate_normalized_normal(*source_vertex_positions[:3])
+    target_normal = calculate_normalized_normal(*target_vertex_positions[:3])
+    
+    #calc rotation matrix from two vectors
+    R_normal = calculate_rotation_matrix(source_normal, target_normal)
+    rx, ry, rz = rotation_matrix_to_euler_angles(R_normal)
+
+    # Apply the combined rotation to the source mesh
+    cmds.select(source_mesh)
+    cmds.rotate(rx, ry, rz, relative=True)
+    
+    # Calculate reference vectors using centroid and vertex2
+    source_vertex_positions = get_vertex_coordinates(source_mesh)
+    source_centroid=calculate_centroid_from_vertecies(source_mesh)
+    target_centroid=calculate_centroid_from_vertecies(target_mesh)
+    source_reference_vector = vector_from_vertex1_to_vertex2(source_centroid, source_vertex_positions[0])
+    target_reference_vector = vector_from_vertex1_to_vertex2(target_centroid, target_vertex_positions[0])
+    
+    do_locator_stuff(target_normal,source_mesh,target_mesh,source_reference_vector,target_reference_vector)
+
+
+def magnitude(v):
+    """Compute magnitude (length) of a 3D vector."""
+    return math.sqrt(sum(val**2 for val in v))
+    
+def scalar_multiply(vec, scalar):
+    """Multiply a 3D vector by a scalar."""
+    return [v * scalar for v in vec]
+
+def vector_subtract(v1, v2):
+    """Subtract two 3D vectors."""
+    return [a - b for a, b in zip(v1, v2)]
+
+def find_right_angle_point_distance(point1, vector1, point2):
+    """
+    Given point1 with vector1 and point2, find the distance from point1 to point x such that point x lies
+    on the line defined by point1 and vector1, and the triangle formed by point1, point2, and point x has
+    a right angle at point x. (the distance can also be zero, don't forget)
+    """
+    def dot_product(v1, v2):
+        return sum(a*b for a, b in zip(v1, v2))
+    
+    def vector_subtraction(v1, v2):
+        return [a-b for a, b in zip(v1, v2)]
+    
+    def vector_addition(v1, v2):
+        return [a+b for a, b in zip(v1, v2)]
+    
+    def vector_scalar_multiplication(v, scalar):
+        return [scalar * i for i in v]
+    
+    def magnitude(v):
+        return (sum(i**2 for i in v))**0.5
+
+    # Calculate the projection of point2 onto the line defined by point1 and vector1
+    PA = vector_subtraction(point2, point1)
+    scalar_projection = dot_product(PA, vector1) / dot_product(vector1, vector1)
+    projected_vector = vector_scalar_multiplication(vector1, scalar_projection)
+    point_x = vector_addition(point1, projected_vector)
+
+    # Calculate the distance from point1 to point x
+    distance_vector = vector_subtraction(point_x, point1)
+    
+    # Return the distance with the correct sign based on the direction of point x
+    return magnitude(distance_vector) * (1 if scalar_projection >= 0 else -1)
+
+
+    
+def angle_between_two_vectors(v1, v2, reference_normal=None):
+    """Compute the angle (in degrees) between two 3D vectors."""
+    dot_prod = dot_product(v1, v2)
+    mag_v1 = magnitude(v1)
+    mag_v2 = magnitude(v2)
+    angle_rad = math.acos(dot_prod / (mag_v1 * mag_v2))
+    
+    # If a reference normal is provided, determine the "direction" of the angle.
+    if reference_normal:
+        cross_prod = cross_product(v1, v2)
+        direction = dot_product(cross_prod, reference_normal)
+        if direction < 0:
+            angle_rad = -angle_rad  # or you might want to use 2*math.pi - angle_rad
+
+    return math.degrees(angle_rad)
+    
+def move_point_along_vector(point, vector, value):
+
+    # Normalize the vector
+    vector_length = (vector[0]**2 + vector[1]**2 + vector[2]**2)**0.5
+    normalized_vector = (vector[0] / vector_length, vector[1] / vector_length, vector[2] / vector_length)
+
+    # Calculate the new position
+    new_point = (
+        point[0] + normalized_vector[0] * value,
+        point[1] + normalized_vector[1] * value,
+        point[2] + normalized_vector[2] * value
+    )
+
+    return new_point
+    
+def do_locator_stuff(target_normal, source_mesh, target_mesh, source_reference_vector, target_reference_vector):
+    
+    # Create a locator
+    locator = cmds.spaceLocator(name="my_locator")[0]
+    
+    # Source vector is (0, 1, 0)
+    source_vector = (0, 1, 0)
+    
+    # Calculate the rotation matrix based on the two vectors
+    R_normal = calculate_rotation_matrix(source_vector, target_normal)
+    
+    # Get euler angles from the rotation matrix
+    rx, ry, rz = rotation_matrix_to_euler_angles(R_normal)
+    
+    # Apply rotations to the locator
+    cmds.select(locator)
+    cmds.rotate(rx, ry, rz, relative=True)
+    
+    # Get vertex coordinates
+    target_centroid = calculate_centroid_from_vertecies(target_mesh)
+    target_vertex_positions = get_vertex_coordinates(target_mesh)
+    source_vertex_positions = get_vertex_coordinates(source_mesh)
+
+    # Get the y value to move the locator by to align with vertices[0]
+    y = find_right_angle_point_distance(target_centroid, target_normal, target_vertex_positions[0])
+    
+    # move locator
+    new_pos=move_point_along_vector(target_centroid, target_normal, y)
+    cmds.setAttr(locator + ".translateX", new_pos[0])
+    cmds.setAttr(locator + ".translateY", new_pos[1])
+    cmds.setAttr(locator + ".translateZ", new_pos[2])
+    
+    # Get the position of the locator after the move
+    locator_position = cmds.xform(locator, query=True, translation=True, worldSpace=True)
+
+    # Create vectors from locator to target and source vertex positions
+    vector_to_target = [target_vertex_positions[0][i] - locator_position[i] for i in range(3)]
+    vector_to_source = [source_vertex_positions[0][i] - locator_position[i] for i in range(3)]
+
+    # Calculate the angle between these two vectors
+    rotation_value = angle_between_two_vectors(vector_to_source, vector_to_target, target_normal)  # I'm assuming the normal you want to use is still target_normal. Adjust if needed.
+
+    print(rotation_value)
+    
+    # Parent the source object to the locator
+    cmds.parent(source_mesh, locator)
+    
+    # Rotate the locator by the calculated angle along Y axis
+    cmds.select(locator)
+    cmds.rotate(0, rotation_value, 0, relative=True, os=True)
+    
+    # Unparent the source object from the locator
+    cmds.parent(source_mesh, world=True)
+
+    # Delete the locator
+    cmds.delete(locator)
+
+    
+################### T R A N S L A T E #######################------>>>>>
+
+def calculate_centroid_from_vertecies(obj_name):
+    #calculate_centroid_from_pivot
+     # Get all vertices of the object
+    vertices = cmds.ls(obj_name + '.vtx[*]', flatten=True)
+
+    # Initialize centroid coordinates
+    centroid = [0, 0, 0]
+    
+    # Sum up all vertex positions
+    for vtx in vertices:
+        position = cmds.pointPosition(vtx, world=True)
+        centroid[0] += position[0]
+        centroid[1] += position[1]
+        centroid[2] += position[2]
+
+    # Divide by the total number of vertices to get the centroid
+    num_vertices = len(vertices)
+    centroid = [coord / num_vertices for coord in centroid]
+
+    # Set the pivot of the object to the centroid
+    cmds.xform(obj_name, pivots=centroid, worldSpace=True)
+
+    return centroid  # Return the centroid for further use or verification
+
+def move_to_target_position(source_obj, target_obj):
+    # Get the first three vertices and their positions for both source and target triangles
+    source_vertices = get_vertex_coordinates(source_obj)
+    target_vertices = get_vertex_coordinates(target_obj)
+
+    # Check if source and target have vertices
+    if not source_vertices or not target_vertices:
+        print("Source and/or target triangles have no vertices.")
+        return
+
+    # Calculate the centroids of both triangles using the new function
+    source_centroid = calculate_centroid_from_vertecies(source_obj)
+    target_centroid = calculate_centroid_from_vertecies(target_obj)
+
+    # Check for validity of the centroids
+    if source_centroid is None or target_centroid is None:
+        print("Unable to calculate centroids.")
+        return
+
+    # Update the points' positions (assuming you still need this step with your method 'copyToPoint')
+    #copyToPoint("point", source_centroid)
+    #copyToPoint("point", target_centroid)
+
+    # Calculate the translation needed to move the source to the target centroid
+    translation = [target_centroid[i] - source_centroid[i] for i in range(3)]
+
+    # Move the source triangle to the target triangle's position
+    cmds.select(source_obj)
+    cmds.move(translation[0], translation[1], translation[2], relative=True)
+
+
+################# S C A L E #################----->>>>
+
+def calculate_scaling_factors(source_vertices, target_vertices):
+    if len(source_vertices) != 3 or len(target_vertices) != 3:
+        return None
+
+    # Calculate the surface areas of the triangles formed by source and target vertices
+    source_area = calculate_triangle_area(source_vertices)
+    target_area = calculate_triangle_area(target_vertices)
+
+    # Calculate the uniform scaling factor
+    scaling_factor = math.sqrt(target_area / source_area) if source_area != 0 else 1.0
+
+    return scaling_factor,scaling_factor,scaling_factor
+
+def calculate_triangle_area(vertices):
+    # Calculate the area of a triangle using Heron's formula
+    a = math.sqrt((vertices[0][0] - vertices[1][0]) ** 2 + (vertices[0][1] - vertices[1][1]) ** 2 + (vertices[0][2] - vertices[1][2]) ** 2)
+    b = math.sqrt((vertices[1][0] - vertices[2][0]) ** 2 + (vertices[1][1] - vertices[2][1]) ** 2 + (vertices[1][2] - vertices[2][2]) ** 2)
+    c = math.sqrt((vertices[2][0] - vertices[0][0]) ** 2 + (vertices[2][1] - vertices[0][1]) ** 2 + (vertices[2][2] - vertices[0][2]) ** 2)
+    s = (a + b + c) / 2
+    area = math.sqrt(s * (s - a) * (s - b) * (s - c))
+    return area
+
+def scale_to_fit(source_obj, target_obj):
+    # Get the first three vertices and their positions for both source and target triangles
+    source_vertices = get_first_three_vertices_and_positions(source_obj)
+    target_vertices = get_first_three_vertices_and_positions(target_obj)
+    
+
+    if len(source_vertices) != 3 or len(target_vertices) != 3:
+        print("Source and/or target triangles must have exactly 3 vertices.")
+        return
+
+    # Calculate the scaling factors
+    scaling_factors = calculate_scaling_factors(source_vertices, target_vertices)
+    #print(scaling_factors)
+    if scaling_factors is None:
+        print("Unable to calculate scaling factors.")
+        return
+
+    # Apply the scaling transformation to the source triangle
+    cmds.select(source_obj)
+    cmds.scale(scaling_factors[0], scaling_factors[1], scaling_factors[2], relative=True)
+
+
+############# E X T R A S ############### --------->>>>>>>
+    
+def copy_to_point(copy_object, position):
+    """Create a copy of the given object and place it at the specified position."""
+    new_obj = cmds.duplicate(copy_object)[0]
+    cmds.setAttr(new_obj + ".translateX", position[0])
+    cmds.setAttr(new_obj + ".translateY", position[1])
+    cmds.setAttr(new_obj + ".translateZ", position[2])
+    print(position)
+    return new_obj
+    
+def get_first_three_vertices_and_positions(mesh_name):
+    # Check if the mesh exists
+    if not cmds.objExists(mesh_name):
+        cmds.warning("Mesh '{}' does not exist.".format(mesh_name))
+        return []
+
+    # Get the 3D coordinates of vertex 0, 1, and 2
+    vertex_0 = cmds.pointPosition(mesh_name + '.vtx[0]', w=True)
+    vertex_1 = cmds.pointPosition(mesh_name + '.vtx[1]', w=True)
+    vertex_2 = cmds.pointPosition(mesh_name + '.vtx[2]', w=True)
+
+    return [vertex_0, vertex_1, vertex_2]
+   
+def get_vertex_coordinates(mesh_name):
+ 
+    # Get the 3D coordinates of all vertices of the mesh
+    num_vertices = cmds.polyEvaluate(mesh_name, vertex=True)
+    vertices = []
+    for i in range(num_vertices):
+        vertex_coord = cmds.pointPosition('{}.vtx[{}]'.format(mesh_name, i), w=True)
+        vertices.append(vertex_coord)
+
+    return vertices    
+
+######### M A I N ###########------>>>>
+
+def source_to_target(source, target):
+    scale_to_fit(source, target)
+    move_to_target_position(source, target)
+    align_source_with_target(source, target)
+   
+    
+        
+#######################    
+# Get selected objects#
+#######################
+selected_objects = cmds.ls(selection=True)
+
+if not selected_objects:
+    print("No objects selected.")
+else:
+    # The first selected object is the source, and the rest are targets
+    source = selected_objects[0]
+    targets = selected_objects[1:]
+    
+    # Only create a group and parent the instances if more than two target objects exist
+    if len(targets) >= 2:
+        id = int(time.time()) % 1000
+        
+        # Create a unique group name with 3 digits at the end based on the current time
+        group_name = "instances_{}".format(id)
+        
+        # Create the group if it doesn't exist
+        if not cmds.objExists(group_name):
+            cmds.group(em=True, name=group_name)
+        
+        instance_counter = 0
+        for target in targets:
+            # Instance the source to each target with a unique name
+            instance_name = "{}_inst_{}_{}".format(source, id, instance_counter)
+            instance_source = cmds.instance(source, name=instance_name)[0]
+ 
+            source_to_target(instance_source, target)
+            
+            # Parent the instance to the group
+            cmds.parent(instance_source, group_name)
+            
+            # Increment the counter to ensure the next instance has a unique name
+            instance_counter += 1
+    else:
+        # If there are two or fewer targets, just instance the source to each target without creating a group or parenting
+        for target in targets:
+            # Instance the source to each target without a specific naming pattern (since there's no group)
+            instance_source = cmds.instance(source)[0]
+            
+            source_to_target(instance_source, target)
+
+
+
+
+
+
+
+
+
+    #       #       #       #       #       #       #       #       #       #       #       #       #
+  #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #
+#       #       #       #       #       #       #       #       #       #       #       #       #       # 
+  #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #   #
+    #       #       #       #       #       #       #       #       #       #       #       #       #
