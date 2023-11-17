@@ -1,0 +1,64 @@
+
+#######################
+#WORKING FINAL PUBLISH#
+#######################
+
+#created by shankar doran
+# contact #
+'''
+https://www.linkedin.com/in/shankar-doran-186415275/
+'''
+
+#python code for maya 2020
+#set attributes of selections to values. 
+#all selections must have the attributes that are being changed. 
+
+# input template #
+'''
+attrib1 = value1
+attrib2 = value2
+attrib3 = value3
+'''
+
+import maya.cmds as cmds
+
+def applyAttributeChanges(*args):
+    inputText = cmds.scrollField("attributeEditorField", query=True, text=True)
+    selectedObjects = cmds.ls(selection=True)
+    
+    for obj in selectedObjects:
+        # Split the inputText into lines
+        lines = inputText.splitlines()
+        
+        for line in lines:
+            line = line.strip()
+            
+            if '=' in line:
+                attr, value = line.split('=')
+                attr = attr.strip()
+                value = value.strip()
+                
+                try:
+                    # Determine the type of attribute
+                    attrType = cmds.getAttr(obj + "." + attr, type=True)
+                    
+                    if attrType == "string":
+                        cmds.setAttr(obj + "." + attr, value, type="string")
+                    else:
+                        cmds.setAttr(obj + "." + attr, float(value))
+                except ValueError:
+                    # Handle errors gracefully
+                    print("Error setting attribute: " + obj + "." + attr)
+
+def createAttributeEditor():
+    if cmds.window("attributeEditorWindow", exists=True):
+        cmds.deleteUI("attributeEditorWindow", window=True)
+
+    attributeEditorWindow = cmds.window("attributeEditorWindow", title="Attribute Editor", widthHeight=(300, 150))
+    cmds.columnLayout(adjustableColumn=True)
+    cmds.text(label="Enter attribute assignments (attribute = value):")
+    cmds.scrollField("attributeEditorField", wordWrap=True, height=100)
+    cmds.button(label="Apply", command=applyAttributeChanges)
+    cmds.showWindow(attributeEditorWindow)
+
+createAttributeEditor()
