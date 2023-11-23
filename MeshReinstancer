@@ -425,6 +425,7 @@ def source_to_target(source, target):
     scale_to_fit(source, target)
     move_to_target_position(source, target)
     align_source_with_target(source, target)
+    cmds.delete(target)
    
     
         
